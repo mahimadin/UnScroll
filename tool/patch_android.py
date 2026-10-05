@@ -23,7 +23,7 @@ s = re.sub(r'namespace\s*=?\s*"[^"]*"', f'namespace{eq}"{APP_ID}"', s)
 s = re.sub(r'applicationId\s*=?\s*"[^"]*"', f'applicationId{eq}"{APP_ID}"', s)
 
 # SDK Versions
-s = re.sub(r'compileSdk\w*\s*=?\s*[^\n]+', f'compileSdk{eq}34', s)
+s = re.sub(r'compileSdk\w*\s*=?\s*[^\n]+', f'compileSdk{eq}36', s)
 s = re.sub(r'minSdk\w*\s*=?\s*[^\n]+', f'minSdk{eq}24', s)
 s = re.sub(r'targetSdk\w*\s*=?\s*[^\n]+', f'targetSdk{eq}34', s)
 
