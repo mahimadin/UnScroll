@@ -25,19 +25,16 @@ jobs:
           channel: stable
           cache: true
 
-      # The repo only contains Dart sources + pubspec. Generate the Android
-      # scaffolding in the cloud, then restore our own sources and patch Gradle.
       - name: Generate Android project
         run: |
-          flutter create --platforms=android --org com.unscroll --project-name social .
+          flutter create --platforms=android --org com.unscroll --project-name unscroll .
           git checkout -- lib pubspec.yaml
           rm -rf test
           python3 tool/patch_android.py
 
       - run: flutter pub get
 
-      # NOTE: --no-sound-null-safety was removed in Dart 3 (build would fail); app is fully null-safe.
-      - run: flutter build apk --release
+      - run: flutter build apk --release --verbose
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk Unscroll.apk
