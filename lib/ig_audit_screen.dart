@@ -1,12 +1,12 @@
 import 'dart:convert';
-import 'package:file_picker/file_picker.dart';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Instagram follower audit using the official "Download your information"
 /// export (JSON). No login, no password, no network calls to Instagram.
-/// Everything stays on-device.
+/// Everything stays on-device without requiring problematic third-party file pickers.
 class IgAuditScreen extends StatefulWidget {
   const IgAuditScreen({super.key});
   @override
@@ -56,34 +56,119 @@ class _IgAuditScreenState extends State<IgAuditScreen> {
     return out;
   }
 
-  Future<void> importFiles() async {
-    final r = await FilePicker.platform
-        .pickFiles(allowMultiple: true, withData: true, type: FileType.any);
-    if (r == null) return;
-    final fers = <String>{}, fing = <String>{};
-    var nFers = 0, nFing = 0;
-    try {
-      for (final f in r.files) {
-        final n = f.name.toLowerCase();
-        if (!n.endsWith('.json') || f.bytes == null) continue;
-        final txt = utf8.decode(f.bytes!);
-        if (n.startsWith('followers')) {
-          fers.addAll(parse(txt));
-          nFers++;
-        } else if (n.startsWith('following')) {
-          fing.addAll(parse(txt));
-          nFing++;
-        }
-      }
-    } catch (e) {
-      setState(() => msg = 'Could not read a file. Make sure the export is in JSON format.');
-      return;
-    }
-    if (nFers == 0 || nFing == 0) {
-      setState(() => msg =
-          'Select BOTH followers_1.json (all followers_N files) and following.json.');
-      return;
-    }
+  Future<void> showImportDialog() async {
+    final followersCtrl = TextEditingController();
+    final followingCtrl = TextEditingController();
+    final pathCtrl = TextEditingController(text: '/storage/emulated/0/Download');
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+            left: 16,
+            right: 16,
+            top: 20),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Import Instagram JSON',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              const Text('Option 1: Auto-scan a folder on your phone',
+                  style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF7C5CFF))),
+              const SizedBox(height: 6),
+              TextField(
+                controller: pathCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'Folder path',
+                    hintText: '/storage/emulated/0/Download'),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.tonal(
+                onPressed: () {
+                  final dir = Directory(pathCtrl.text.trim());
+                  if (!dir.existsSync()) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Folder not found or not accessible.')));
+                    return;
+                  }
+                  final fers = <String>{}, fing = <String>{};
+                  try {
+                    for (final entity in dir.listSync(recursive: true)) {
+                      if (entity is File && entity.path.endsWith('.json')) {
+                        final name = entity.uri.pathSegments.last.toLowerCase();
+                        if (name.startsWith('followers')) {
+                          fers.addAll(parse(entity.readAsStringSync()));
+                        } else if (name.startsWith('following')) {
+                          fing.addAll(parse(entity.readAsStringSync()));
+                        }
+                      }
+                    }
+                    if (fers.isEmpty || fing.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Could not find both followers_*.json and following.json in this folder.')));
+                      return;
+                    }
+                    saveData(fers, fing);
+                    Navigator.pop(ctx);
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error reading folder: $e')));
+                  }
+                },
+                child: const Text('Scan Folder for JSON Files'),
+              ),
+              const Divider(height: 32),
+              const Text('Option 2: Paste JSON content directly',
+                  style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF7C5CFF))),
+              const SizedBox(height: 8),
+              TextField(
+                controller: followersCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                    labelText: 'Paste followers_1.json text here',
+                    hintText: '[{"string_list_data": [...]}]'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: followingCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                    labelText: 'Paste following.json text here',
+                    hintText: '{"relationships_following": [...]}'),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: () {
+                  try {
+                    final fers = parse(followersCtrl.text.trim());
+                    final fing = parse(followingCtrl.text.trim());
+                    if (fers.isEmpty || fing.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Please paste valid JSON for both fields.')));
+                      return;
+                    }
+                    saveData(fers, fing);
+                    Navigator.pop(ctx);
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Invalid JSON format: $e')));
+                  }
+                },
+                child: const Text('Process Pasted Data'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> saveData(Set<String> fers, Set<String> fing) async {
     await p.setStringList('ig_followers', fers.toList());
     await p.setStringList('ig_following', fing.toList());
     setState(() {
@@ -143,8 +228,8 @@ class _IgAuditScreenState extends State<IgAuditScreen> {
         actions: [
           IconButton(
               icon: const Icon(Icons.upload_file),
-              tooltip: 'Import export files',
-              onPressed: importFiles),
+              tooltip: 'Import export data',
+              onPressed: showImportDialog),
           if (hasData)
             IconButton(
                 icon: const Icon(Icons.delete_outline),
@@ -171,7 +256,7 @@ class _IgAuditScreenState extends State<IgAuditScreen> {
                   '1. Instagram → Settings → Accounts Center → Your information and permissions → Download your information.\n'
                   '2. Choose "Some of your information" → Followers and following. Date range: All time. Format: JSON. Submit.\n'
                   '3. When the email arrives, download and unzip it. Files are in connections/followers_and_following/.\n'
-                  '4. Tap Import and select followers_1.json (and any followers_2…) plus following.json.',
+                  '4. Tap Import below to scan the Download folder or paste the JSON text.',
                   style: TextStyle(height: 1.5, color: Colors.white70)),
               if (msg != null)
                 Padding(
@@ -180,9 +265,9 @@ class _IgAuditScreenState extends State<IgAuditScreen> {
                         style: const TextStyle(color: Colors.redAccent))),
               const SizedBox(height: 20),
               FilledButton.icon(
-                  onPressed: importFiles,
+                  onPressed: showImportDialog,
                   icon: const Icon(Icons.upload_file),
-                  label: const Text('Import files')),
+                  label: const Text('Import data')),
             ])
           : DefaultTabController(
               length: 3,
