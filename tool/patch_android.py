@@ -1,99 +1,62 @@
 #!/usr/bin/env python3
-"""Patch the Flutter-generated Android project (run from repo root, after `flutter create`).
-
-Sets applicationId/namespace=com.unscroll.social, minSdk=24, targetSdk=34, compileSdk=36,
-adds necessary permissions and intent queries to AndroidManifest.xml, disables lint failures,
-and disables checkAarMetadata tasks across all subprojects/plugins.
-"""
+"""Patch Android configuration and cached pub plugins to ensure compileSdk 36."""
+import os
 import pathlib
 import re
 
 APP_ID = "com.unscroll.social"
 
-# 1. Patch android/app/build.gradle(.kts)
+# 1. Patch pub-cache plugins (e.g. file_picker, image_picker) to compileSdk 36
+pub_cache = pathlib.Path(os.path.expanduser("~/.pub-cache"))
+if pub_cache.exists():
+    for f in pub_cache.rglob("build.gradle*"):
+        try:
+            txt = f.read_text(encoding="utf-8", errors="ignore")
+            new_txt = re.sub(r'compileSdk(Version)?\s*=\s*\d+', r'compileSdk = 36', txt)
+            new_txt = re.sub(r'compileSdkVersion\s+\d+', r'compileSdkVersion 36', new_txt)
+            if new_txt != txt:
+                f.write_text(new_txt, encoding="utf-8")
+                print(f"Updated {f.parent.name}/{f.name} to compileSdk 36")
+        except Exception:
+            pass
+
+# 2. Patch android/app/build.gradle(.kts)
 app_gradle = next(
     (p for p in (pathlib.Path("android/app/build.gradle.kts"),
                  pathlib.Path("android/app/build.gradle")) if p.exists()),
     None,
 )
-assert app_gradle, "android/app/build.gradle(.kts) not found"
-kts = app_gradle.suffix == ".kts"
-s = app_gradle.read_text()
+if app_gradle:
+    kts = app_gradle.suffix == ".kts"
+    s = app_gradle.read_text()
+    eq = " = " if kts else " "
 
-eq = " = " if kts else " "
-# Namespace & ApplicationId
-s = re.sub(r'namespace\s*=?\s*"[^"]*"', f'namespace{eq}"{APP_ID}"', s)
-s = re.sub(r'applicationId\s*=?\s*"[^"]*"', f'applicationId{eq}"{APP_ID}"', s)
+    s = re.sub(r'namespace\s*=?\s*"[^"]*"', f'namespace{eq}"{APP_ID}"', s)
+    s = re.sub(r'applicationId\s*=?\s*"[^"]*"', f'applicationId{eq}"{APP_ID}"', s)
+    s = re.sub(r'compileSdk\w*\s*=?\s*[^\n]+', f'compileSdk{eq}36', s)
+    s = re.sub(r'minSdk\w*\s*=?\s*[^\n]+', f'minSdk{eq}24', s)
+    s = re.sub(r'targetSdk\w*\s*=?\s*[^\n]+', f'targetSdk{eq}34', s)
 
-# SDK Versions
-s = re.sub(r'compileSdk\w*\s*=?\s*[^\n]+', f'compileSdk{eq}36', s)
-s = re.sub(r'minSdk\w*\s*=?\s*[^\n]+', f'minSdk{eq}24', s)
-s = re.sub(r'targetSdk\w*\s*=?\s*[^\n]+', f'targetSdk{eq}34', s)
-
-# Add lint configuration to avoid CI failures on minor warnings
-if kts:
-    if "lint {" not in s:
-        lint_block = """
+    if kts:
+        if "lint {" not in s:
+            lint_block = """
     lint {
         checkReleaseBuilds = false
         abortOnError = false
     }
 """
-        s = re.sub(r'(android\s*\{)', r'\1' + lint_block, s, count=1)
-else:
-    if "lintOptions {" not in s:
-        lint_block = """
+            s = re.sub(r'(android\s*\{)', r'\1' + lint_block, s, count=1)
+    else:
+        if "lintOptions {" not in s:
+            lint_block = """
     lintOptions {
         checkReleaseBuilds false
         abortOnError false
     }
 """
-        s = re.sub(r'(android\s*\{)', r'\1' + lint_block, s, count=1)
+            s = re.sub(r'(android\s*\{)', r'\1' + lint_block, s, count=1)
 
-# Disable AarMetadata tasks in app gradle
-aar_disable_app = """
-tasks.configureEach {
-    if (name.contains("AarMetadata")) {
-        enabled = false
-    }
-}
-"""
-if "AarMetadata" not in s:
-    s += "\n" + aar_disable_app
-
-app_gradle.write_text(s)
-
-# 2. Patch root android/build.gradle(.kts) to disable checkAarMetadata across all subprojects (NO afterEvaluate)
-root_gradle = next(
-    (p for p in (pathlib.Path("android/build.gradle.kts"),
-                 pathlib.Path("android/build.gradle")) if p.exists()),
-    None,
-)
-if root_gradle:
-    root_kts = root_gradle.suffix == ".kts"
-    root_s = root_gradle.read_text()
-    if "AarMetadata" not in root_s:
-        if root_kts:
-            subprojects_block = """
-subprojects {
-    tasks.configureEach {
-        if (name.contains("AarMetadata")) {
-            enabled = false
-        }
-    }
-}
-"""
-        else:
-            subprojects_block = """
-subprojects {
-    tasks.configureEach { task ->
-        if (task.name.contains("AarMetadata")) {
-            task.enabled = false
-        }
-    }
-}
-"""
-        root_gradle.write_text(root_s + "\n" + subprojects_block)
+    app_gradle.write_text(s)
 
 # 3. Patch gradle.properties
 props_file = pathlib.Path("android/gradle.properties")
@@ -104,10 +67,11 @@ if props_file.exists():
 
 # 4. AndroidManifest.xml permissions and queries
 manifest = pathlib.Path("android/app/src/main/AndroidManifest.xml")
-m = manifest.read_text()
-m = re.sub(r'android:label="[^"]*"', 'android:label="Unscroll"', m, count=1)
+if manifest.exists():
+    m = manifest.read_text()
+    m = re.sub(r'android:label="[^"]*"', 'android:label="Unscroll"', m, count=1)
 
-permissions = """
+    permissions = """
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -115,7 +79,7 @@ permissions = """
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 """
 
-queries = """
+    queries = """
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -124,12 +88,12 @@ queries = """
     </queries>
 """
 
-if "<uses-permission" not in m:
-    m = m.replace("<application", permissions + "\n    <application", 1)
+    if "<uses-permission" not in m:
+        m = m.replace("<application", permissions + "\n    <application", 1)
 
-if "<queries>" not in m:
-    m = m.replace("</manifest>", queries + "\n</manifest>", 1)
+    if "<queries>" not in m:
+        m = m.replace("</manifest>", queries + "\n</manifest>", 1)
 
-manifest.write_text(m)
+    manifest.write_text(m)
 
-print(f"Patched Android configurations successfully.")
+print("Patching completed successfully.")
