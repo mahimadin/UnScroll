@@ -3,7 +3,7 @@
 
 Sets applicationId/namespace=com.unscroll.social, minSdk=24, targetSdk=34, compileSdk=36,
 adds necessary permissions and intent queries to AndroidManifest.xml, disables lint failures,
-and overrides subproject compileSdk to 36 while disabling checkAarMetadata tasks.
+and disables checkAarMetadata tasks across all subprojects/plugins.
 """
 import pathlib
 import re
@@ -63,7 +63,7 @@ if "AarMetadata" not in s:
 
 app_gradle.write_text(s)
 
-# 2. Patch root android/build.gradle(.kts) to override plugins' compileSdk and disable checkAarMetadata
+# 2. Patch root android/build.gradle(.kts) to disable checkAarMetadata across all subprojects (NO afterEvaluate)
 root_gradle = next(
     (p for p in (pathlib.Path("android/build.gradle.kts"),
                  pathlib.Path("android/build.gradle")) if p.exists()),
@@ -76,15 +76,6 @@ if root_gradle:
         if root_kts:
             subprojects_block = """
 subprojects {
-    afterEvaluate {
-        val android = extensions.findByName("android")
-        if (android != null) {
-            try {
-                val method = android.javaClass.getMethod("compileSdkVersion", Int::class.javaPrimitiveType)
-                method.invoke(android, 36)
-            } catch (e: Throwable) {}
-        }
-    }
     tasks.configureEach {
         if (name.contains("AarMetadata")) {
             enabled = false
@@ -95,13 +86,6 @@ subprojects {
         else:
             subprojects_block = """
 subprojects {
-    afterEvaluate { project ->
-        if (project.hasProperty('android')) {
-            project.android {
-                compileSdkVersion 36
-            }
-        }
-    }
     tasks.configureEach { task ->
         if (task.name.contains("AarMetadata")) {
             task.enabled = false
